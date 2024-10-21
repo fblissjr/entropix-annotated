@@ -218,7 +218,7 @@ def main(weights_path: Path = DEFAULT_WEIGHTS_PATH.joinpath('1B-Instruct')):
     # </thought>
 
     # Load prompts from a CSV file (commented out in this version)
-    csv_path = Path('entropix/data/prompts.csv')
+    csv_path = Path('entropix/data/prompts2.csv')
     prompts = create_prompts_from_csv(csv_path)
     PROMPT_TEST = False
 

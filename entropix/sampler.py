@@ -237,4 +237,13 @@ def sample(gen_tokens: jax.Array, logits: jax.Array, attention_scores: jax.Array
             confidence_score = (
                 (1 - metrics["logits_entropy"]) * cfg.ada_score_logits_ent +
                 (1 - metrics["attn_entropy"]) * cfg.ada_score_attn_ent +
-                (1 - metrics["logits_varentropy"]) * cfg.
+                (1 - metrics["logits_varentropy"]) * cfg.ada_score_logits_vent +
+                (1 - metrics["attn_varentropy"]) * cfg.ada_score_attn_vent +
+                metrics["agreement"] * cfg.ada_score_agree +
+                metrics["interaction_strength"] * cfg.ada_score_int
+            )
+            return log_prob + confidence_score
+
+        sample_scores = [score_sample(sample) for sample in samples]
+        best_sample_idx = jnp.argmax(jnp.array(sample_scores))
+        return samples[best_sample_idx]

@@ -16,3 +16,7 @@
 
 * feel free to PR (or fork the fork) any additional comments/thoughts/tests that can be helpful
 * the only new code should be tests of using the existing entropix code - this repo is *not* meant to act as a replacement code repo
+
+# more diagrams
+![Detailed Architecture Diagram](images/entropix-detailed-architecture.png)
+![Detailed Sampling Process](images/entropix-sampling-process.png)

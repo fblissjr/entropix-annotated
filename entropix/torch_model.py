@@ -22,8 +22,27 @@ else:
 
 from typing import Tuple, Optional
 
+# <thought>
+# The device selection logic appears again here. This repetition across files
+# suggests a lack of centralized configuration. It might be better to have a
+# single config file that handles device selection for the entire project.
+# 
+# The commented out print statement is curious. Was this left for debugging?
+# It's generally better to use proper logging mechanisms for such information.
+# </thought>
+
 def rms_norm(x: torch.Tensor, w: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
   return w * (x * torch.rsqrt(torch.pow(x, 2).mean(-1, keepdim=True) + eps))
+
+# <thought>
+# This is an implementation of Root Mean Square (RMS) Normalization.
+# Interesting choice over LayerNorm. RMSNorm is computationally cheaper
+# and has been shown to work well in large language models.
+# 
+# The use of torch.rsqrt for the reciprocal square root is a good optimization.
+# However, I wonder about the numerical stability here. The epsilon is quite small.
+# In some cases, a larger epsilon (e.g., 1e-5) might be more stable.
+# </thought>
 
 def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor, dtype: torch.dtype = torch.float32) -> Tuple[torch.Tensor, torch.Tensor]:
     reshape_xq = xq.float().reshape(*xq.shape[:-1], -1, 2)
@@ -35,6 +54,20 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
     xq_out = torch.stack((xq_out.real, xq_out.imag), dim=-1).reshape(*xq_out.shape[:-1], -1)
     xk_out = torch.stack((xk_out.real, xk_out.imag), dim=-1).reshape(*xk_out.shape[:-1], -1)
     return xq_out.to(dtype), xk_out.to(dtype)
+
+# <thought>
+# This is an implementation of Rotary Position Embeddings (RoPE).
+# The use of complex numbers for rotation is clever and efficient.
+# 
+# However, there are a few points to consider:
+# 1. The constant conversion to float() could be expensive. Could we ensure
+#    the input is always in the correct dtype to avoid this?
+# 2. The reshaping operations are numerous. Could this be optimized?
+# 3. The function assumes the last dimension of xq and xk is even. What happens
+#    if it's not? Should we add an assertion or handle this case?
+# 
+# The use of unsqueeze operations for broadcasting is good practice.
+# </thought>
 
 def attention(x: torch.Tensor, layer_weights: LayerWeights, model_params, cur_pos: int, layer_idx: int, freqs_cis: torch.Tensor, kvcache: KVCache, attn_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, KVCache, torch.Tensor]:
     bsz, _, _ = x.shape
@@ -60,8 +93,40 @@ def attention(x: torch.Tensor, layer_weights: LayerWeights, model_params, cur_po
     out = F.linear(output, layer_weights.wo)
     return out, kvcache, pre_scores
 
+# <thought>
+# This attention implementation is quite complex and includes several optimizations:
+# 1. It uses grouped-query attention (n_local_heads vs n_local_kv_heads)
+# 2. It incorporates a key-value cache for efficient autoregressive generation
+# 3. It applies rotary position embeddings
+# 
+# Some points to consider:
+# 1. The use of F.linear instead of direct matrix multiplication. This is good for
+#    flexibility (e.g., using different dtypes), but might be slightly slower.
+# 2. The attention mask is only applied when cur_pos == 0. Is this always correct?
+#    What about continuing generation from a non-zero position?
+# 3. The use of DEFAULT_MASK_VALUE and the subsequent masking logic is interesting.
+#    It's trying to avoid -inf values, but the logic is a bit complex. Could this
+#    be simplified?
+# 4. The final linear projection (wo) is outside the main attention computation.
+#    This is good for modularity, but might miss some optimization opportunities.
+# 
+# The function returns pre_scores, which seems to be unused. Is this for debugging?
+# </thought>
+
 def feed_forward(x: torch.Tensor, layer_weights: LayerWeights) -> torch.Tensor:
  return F.linear(F.silu(F.linear(x, layer_weights.w1)) * F.linear(x, layer_weights.w3), layer_weights.w2)
+
+# <thought>
+# This is an implementation of the SwiGLU activation function, which has been
+# shown to work well in large language models.
+# 
+# The use of F.linear again provides flexibility but might have a small
+# performance cost compared to direct matrix multiplication.
+# 
+# The multiplication of two linear projections (w1 and w3) before the final
+# projection (w2) is interesting. This increases the model's capacity without
+# significantly increasing computation. Clever!
+# </thought>
 
 def xfmr(xfmr_weights: XfmrWeights, model_params: ModelParams, tokens: torch.Tensor, cur_pos: int, freqs_cis: torch.Tensor, kvcache: KVCache, attn_mask: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, KVCache, torch.Tensor, AttnStats]:
     h = xfmr_weights.tok_embeddings[tokens]
@@ -78,3 +143,27 @@ def xfmr(xfmr_weights: XfmrWeights, model_params: ModelParams, tokens: torch.Ten
         h = h + feed_forward(rms_norm(h, xfmr_weights.layer_weights[i].ffn_norm), xfmr_weights.layer_weights[i])
     logits = F.linear(rms_norm(h, xfmr_weights.norm), xfmr_weights.output)
     return logits, kvcache, scores, attn_stats
+
+# <thought>
+# This is the main transformer function. It's a pretty standard implementation
+# with a few notable points:
+# 
+# 1. It uses RMSNorm instead of LayerNorm, which is becoming more common in
+#    large language models.
+# 2. It collects attention statistics, which could be useful for analysis or
+#    visualization, but might add some overhead.
+# 3. The use of residual connections (h = h + ...) is standard and important
+#    for training very deep networks.
+# 
+# Questions/Observations:
+# 1. Why is 'scores' returned? It's not clear how this is used downstream.
+# 2. The function takes 'tokens' as input, not embeddings. This means the
+#    embedding layer is part of this function. Is this the best design?
+# 3. The kvcache is updated in-place. This is efficient but could lead to
+#    subtle bugs if not handled carefully in multi-GPU scenarios.
+# 4. There's no dropout here. Is this intentional? Many transformer
+#    implementations include dropout for regularization.
+# 
+# Overall, this seems to be an efficient implementation optimized for
+# inference rather than training.
+# </thought>

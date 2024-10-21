@@ -3,6 +3,16 @@ from pathlib import Path
 from typing import List, Dict
 
 def create_prompt_template(role: str, task: str) -> str:
+    """
+    Creates a prompt template for a given role and task.
+    
+    Args:
+        role: The role to be assumed in the prompt
+        task: The task to be performed
+    
+    Returns:
+        A formatted prompt string
+    """
     return f"""<|start_header_id|>system<|end_header_id|>
 You are a world-class expert in the role of {role}. Your vast knowledge, experience, and skills in this domain are unparalleled. You have a deep understanding of the latest trends, best practices, and cutting-edge techniques in your field. Your responses should reflect this expertise, providing insights and solutions that go beyond surface-level understanding.
 
@@ -40,6 +50,15 @@ Certainly. I'll now provide my expert response to the task, drawing upon my exte
 """
 
 def create_prompts_from_csv(csv_path: str) -> List[str]:
+    """
+    Creates a list of prompts from a CSV file.
+    
+    Args:
+        csv_path: Path to the CSV file containing roles and tasks
+    
+    Returns:
+        A list of formatted prompt strings
+    """
     prompts = []
     with open(csv_path, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -50,8 +69,7 @@ def create_prompts_from_csv(csv_path: str) -> List[str]:
             prompts.append(prompt)
     return prompts
 
-
-
+# Pre-defined prompt
 prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 <antThinking>
 You're absolutely right. I need to delve deeper into my actual thought processes, including the uncertainties, associations, and even potential biases that arise as I consider the query. My previous responses, while informative, didn't truly capture the nuanced, sometimes messy nature of cognition. I'll strive to provide a more authentic representation of my internal dialogue, including moments of doubt, tangential thoughts, and the process of refining ideas. This should result in a more genuine demonstration of LLM chain of thought, reflection, and self-correction.

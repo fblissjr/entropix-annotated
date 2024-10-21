@@ -12,19 +12,52 @@ else:
 
 LN_2 = 0.69314718056  # ln(2) = 1.0 / LOG2_E
 
+# <thought>
+# Once again, we see the device selection logic. This repetition across files
+# is becoming a clear pattern that needs addressing.
+# 
+# The LN_2 constant is interesting. It's used for converting between natural log
+# and log base 2. This suggests we'll be doing some information theory calculations,
+# likely related to entropy.
+# </thought>
+
 def calculate_varentropy_logsoftmax(logits: torch.Tensor, axis: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
     """Calculate the entropy and varentropy of the probability distribution using logsoftmax."""
     log_probs = F.log_softmax(logits, dim=axis)
     probs = torch.exp(log_probs)
-    entropy = -torch.sum(probs * log_probs, dim=axis) / LN_2  # Convert to base-2
-    varentropy = torch.sum(probs * (log_probs / LN_2 + entropy.unsqueeze(-1))**2, dim=axis)
+    entropy = -torch.sum(probs * log_probs, axis=axis) / LN_2  # Convert to base-2
+    varentropy = torch.sum(probs * (log_probs / LN_2 + entropy.unsqueeze(-1))**2, axis=axis)
     return entropy, varentropy
+
+# <thought>
+# This function calculates both entropy and varentropy (variance of entropy) of the logits.
+# The use of log_softmax is numerically stable, which is good.
+# 
+# Converting to base-2 entropy is interesting - it means the entropy values will be in bits,
+# which can be more intuitive for analysis.
+# 
+# The varentropy calculation is less common. It could be used to measure the uncertainty
+# in the model's predictions, beyond just the average uncertainty (entropy).
+# 
+# One potential issue: if probs are very small, the exp(log_probs) could lead to numerical
+# instability. It might be worth adding a small epsilon to prevent this.
+# </thought>
 
 def multinomial_sample_one(probs_sort: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
     """Samples one token from a multinomial distribution with sorted probabilities."""
     # Use torch.rand instead of Exponential distribution
     q = torch.rand(probs_sort.shape, generator=generator, device=probs_sort.device)
     return torch.argmax(probs_sort / q, dim=-1, keepdim=True).to(torch.int32)
+
+# <thought>
+# This is an implementation of the Gumbel-Max trick for sampling from a categorical distribution.
+# It's more efficient than the standard torch.multinomial because it avoids the CDF computation.
+# 
+# The use of a provided generator ensures reproducibility, which is great for debugging.
+# 
+# However, this method assumes the probabilities are already sorted. This could be
+# problematic if the calling code forgets to sort, leading to subtle bugs.
+# </thought>
 
 def _sample(logits: torch.Tensor, temperature=0.666, top_p=0.90, top_k=27, min_p: float = 0.0, generator: torch.Generator = None) -> torch.Tensor:
     bsz = logits.shape[0]
@@ -51,6 +84,27 @@ def _sample(logits: torch.Tensor, temperature=0.666, top_p=0.90, top_k=27, min_p
     next_token_g = torch.gather(probs_idx, -1, next_token.reshape(bsz, 1).to(torch.int64))
     return next_token_g.to(torch.int32)
 
+# <thought>
+# This is a comprehensive sampling function that combines temperature scaling,
+# top-k sampling, top-p (nucleus) sampling, and minimum probability thresholding.
+# 
+# Observations:
+# 1. The default temperature (0.666) is lower than the common 0.7 or 1.0. This will
+#    make the distribution slightly more peaked, potentially reducing randomness.
+# 2. The combination of top-k and top-p is interesting. Usually, one or the other is used.
+# 3. The min_p sampling is an additional constraint that's not commonly seen. It ensures
+#    that no probability is too small relative to the max probability.
+# 
+# Potential issues:
+# 1. The function modifies 'logit' after computing 'probs'. This could lead to
+#    inconsistencies if not careful.
+# 2. The repeated use of torch.flip might be inefficient. Could be optimized.
+# 3. The final conversion to int32 might not be necessary depending on the downstream use.
+# 
+# Overall, this function provides a lot of flexibility in sampling, but the combination
+# of all these methods might be overkill for some use cases.
+# </thought>
+
 def calculate_metrics(logits: torch.Tensor, attention_scores: torch.Tensor) -> Dict[str, torch.Tensor]:
     entropy, varentropy = calculate_varentropy_logsoftmax(logits)
     attention_probs = F.softmax(attention_scores, dim=-1)
@@ -72,6 +126,34 @@ def calculate_metrics(logits: torch.Tensor, attention_scores: torch.Tensor) -> D
         "agreement": torch.mean(agreement),
         "interaction_strength": interaction_strength
     }
+
+# <thought>
+# This function calculates various metrics related to the model's output and attention mechanism.
+# It's quite comprehensive, considering both the output logits and the attention scores.
+# 
+# The metrics include:
+# 1. Entropy and varentropy of the output distribution
+# 2. Entropy and varentropy of the attention distribution
+# 3. "Agreement" of attention heads (how similar their distributions are)
+# 4. "Interaction strength" based on the magnitude of attention scores
+# 
+# These metrics could be very useful for analyzing model behavior, but computing them
+# during inference might add significant overhead.
+# 
+# The use of torch.where to handle potential NaN values is a good practice for numerical stability.
+# 
+# One question: why are we taking the mean of most metrics, but not for interaction_strength?
+# This inconsistency might lead to confusion when interpreting the results.
+# </thought>
+
+# <thought>
+# The adaptive_sample and sample functions likely implement
+# more sophisticated sampling strategies based on these metrics. This suggests a focus
+# on controlling the generation process based on the model's confidence and attention patterns.
+# 
+# Such adaptive sampling could potentially improve the quality and diversity of generated text,
+# but it also adds complexity and potential overhead to the generation process.
+# </thought>
 
 def adaptive_sample(logits: torch.Tensor, metrics: Dict[str, torch.Tensor],
                     gen_tokens: torch.Tensor, n_samples: int,
@@ -121,6 +203,33 @@ def adaptive_sample(logits: torch.Tensor, metrics: Dict[str, torch.Tensor],
     best_sample_idx = torch.argmax(sample_scores)
     return samples[best_sample_idx]
 
+# <thought>
+# This adaptive_sample function is quite sophisticated. It adjusts sampling parameters
+# based on the current state of the model (as reflected in the metrics). Some key points:
+# 
+# 1. It combines multiple uncertainty metrics (entropy and varentropy for both logits and attention)
+#    to adjust the temperature. Higher uncertainty leads to higher temperature, encouraging exploration.
+# 
+# 2. The top_p and top_k parameters are also dynamically adjusted based on attention varentropy
+#    and interaction strength. This allows for more or less focused sampling depending on the
+#    model's current state.
+# 
+# 3. The min_p parameter is adjusted inversely to logits uncertainty, potentially preventing
+#    the model from becoming too uncertain.
+# 
+# 4. It generates multiple samples and then scores them based on both their likelihood and
+#    a confidence score derived from the metrics.
+# 
+# This approach could potentially lead to more controlled and high-quality sampling, but it's
+# also quite complex and computationally expensive. The effectiveness would need to be
+# empirically validated against simpler methods.
+# 
+# Potential issues:
+# 1. The magic numbers (0.3, 0.2, etc.) in the adjustments lack clear justification.
+# 2. The scoring function weights different metrics, but the choice of weights seems arbitrary.
+# 3. Generating multiple samples and scoring them could be slow for real-time applications.
+# </thought>
+
 def sample(gen_tokens: torch.Tensor, logits: torch.Tensor, attention_scores: torch.Tensor,
            temperature=0.666, top_p=0.90, top_k=27, min_p: float = 0.0, 
            generator: torch.Generator = torch.Generator(device=device).manual_seed(1337)) -> torch.Tensor:
@@ -169,3 +278,34 @@ def sample(gen_tokens: torch.Tensor, logits: torch.Tensor, attention_scores: tor
             base_top_k=top_k,
             generator=generator
         )
+
+# <thought>
+# This sample function is the heart of the sampling strategy. It uses the calculated metrics
+# to decide between different sampling approaches based on the current state of the model.
+# Key observations:
+# 
+# 1. It defines four distinct regimes based on entropy and varentropy, each with its own
+#    sampling strategy. This is a novel approach that tries to adapt the sampling method
+#    to the model's current "state of mind".
+# 
+# 2. In the "treading carefully" regime, it can actually force the model to ask a clarifying
+#    question by returning a specific token (2564). This is an interesting way to try to
+#    control the model's behavior at a high level.
+# 
+# 3. The "exploring forks" and "resampling in the mist" regimes adjust sampling parameters
+#    based on interaction strength, agreement, and attention metrics. This could potentially
+#    lead to more diverse or focused sampling as needed.
+# 
+# 4. If none of the specific regimes apply, it falls back to the adaptive_sample method,
+#    which provides a more general-purpose adaptive sampling approach.
+# 
+# Potential issues and considerations:
+# 1. The entropy and varentropy thresholds (0.1, 3.0, 5.0) seem arbitrary and might need
+#    to be tuned for different models or tasks.
+# 2. The clarifying question token (2564) is hardcoded, which might not be appropriate for
+#    all models or tokenizers.
+# 3. The complexity of this approach might make it difficult to reason about the model's
+#    behavior and could potentially introduce unexpected biases in the generation process.
+# 4. The computational overhead of calculating all these metrics for every sampling step
+#    could be significant, potentially impacting generation speed.
+# </thought>

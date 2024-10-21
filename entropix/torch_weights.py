@@ -1,6 +1,5 @@
 from typing import List, NamedTuple
 
-
 import torch
 import jax
 import jax.numpy as jnp
@@ -20,6 +19,15 @@ else:
 
 #print(f"Using device: {device}")
 
+# <thought>
+# Once again, we see the device selection logic. This repetition across files
+# continues to be a concern and suggests a need for centralized configuration.
+# 
+# The imports are interesting here. We're seeing a mix of torch, jax, and numpy.
+# This suggests some kind of interoperability or conversion between these libraries,
+# which could be for benchmarking or compatibility reasons.
+# </thought>
+
 class LayerWeights(NamedTuple):
   wq: torch.Tensor
   wk: torch.Tensor
@@ -37,6 +45,17 @@ class XfmrWeights(NamedTuple):
   output: torch.Tensor
   layer_weights: List[LayerWeights]
 
+# <thought>
+# These NamedTuples define the structure of the weights for a transformer model.
+# The use of NamedTuples provides a clean, immutable structure for organizing the weights.
+# 
+# The LayerWeights class includes weights for attention (wq, wk, wv, wo) and 
+# feed-forward layers (w1, w2, w3), as well as layer normalization weights.
+# 
+# The presence of w3 suggests this might be using a variant of the feed-forward
+# layer, possibly SwiGLU or a similar activation.
+# </thought>
+
 def compare_outputs(torch_output: torch.Tensor, jax_output: jax.Array, atol: float = 1e-5, rtol: float = 1e-8) -> None:
   jax_output_np = np.array(jax_output)
   torch_output_np = torch_output.cpu().view(dtype=torch.uint16).numpy().view(ml_dtypes.bfloat16)
@@ -47,6 +66,17 @@ def compare_outputs(torch_output: torch.Tensor, jax_output: jax.Array, atol: flo
     print(f'JAX output (first 30): {jax_output_np.flatten()[:30]}')
     print(f'PyTorch output (first 30): {torch_output_np.flatten()[:30]}')
     raise e
+
+# <thought>
+# This function is comparing outputs between PyTorch and JAX implementations.
+# It's converting the PyTorch tensor to bfloat16 for comparison, which suggests
+# that the model is using bfloat16 precision, likely for performance reasons.
+# 
+# The use of assert_allclose with small tolerance values indicates that we're
+# expecting very close agreement between the two implementations. This could be
+# part of a verification process to ensure that a PyTorch implementation matches
+# a reference JAX implementation.
+# </thought>
 
 def load_weights(ckpt_dir: Path = Path('weights/1B-Instruct'), n_layers: int = 16):
   w = {}
@@ -81,3 +111,36 @@ def load_weights(ckpt_dir: Path = Path('weights/1B-Instruct'), n_layers: int = 1
     )
 
     return xfmr_weights
+
+# <thought>
+# This load_weights function is doing several interesting things:
+#
+# 1. It's loading weights from .npy files, which are typically associated with NumPy.
+#    This suggests the weights were originally saved in a NumPy-compatible format.
+# 
+# 2. It's using JAX to load the weights initially (jnp.load), then converting to NumPy,
+#    and finally to PyTorch tensors. This multi-step conversion process is unusual
+#    and might be for ensuring compatibility or precision.
+# 
+# 3. The weights are being converted to bfloat16 precision. This is a common choice
+#    for large language models as it offers a good balance of precision and memory efficiency.
+# 
+# 4. There's a comparison being made between the original JAX weights and the
+#    converted PyTorch weights. This suggests a strong emphasis on ensuring
+#    the conversion process doesn't introduce significant numerical discrepancies.
+# 
+# 5. The function is constructing a nested structure of weights (XfmrWeights containing
+#    multiple LayerWeights) that matches the architecture of the transformer model.
+# 
+# 6. The use of torch.inference_mode() suggests this function is optimized for
+#    inference, disabling gradient computation and certain PyTorch optimizations.
+# 
+# Potential issues or considerations:
+# 1. The function assumes a specific directory structure and naming convention
+#    for the weight files. This could be fragile if the weight saving format changes.
+# 2. The hard-coded nature of the layer names (e.g., 'layers.{i}.attention.wq.weight')
+#    might make it difficult to adapt this function to slightly different architectures.
+# 3. Loading and converting each weight tensor individually could be slow for very
+#    large models. A more batched approach might be more efficient.
+# 4. There's no error handling for missing weight files or unexpected architectures.
+# </thought>

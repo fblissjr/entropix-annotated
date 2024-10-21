@@ -1,6 +1,7 @@
 # entropix-annotated
 
 * forked from [xjdr-alt/entropix](https://github.com/xjdr-alt/entropix)
+![High Level Diagram](./images/entropix-diagram.png)
 
 # goals of this fork
 
